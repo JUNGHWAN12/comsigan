@@ -67,8 +67,8 @@ pub fn extract_frame_src(landing_html: &str) -> Result<String> {
 
 /// Second request (EUC-KR page): pull out the route code and sc_data args.
 pub fn parse_frame(frame_url: &str, source: String) -> Result<Session> {
-    let i_ra = source.find("school_ra(sc)").context("`school_ra(sc)` not found in frame page")?;
-    let i_sc = source.find("sc_data('").context("`sc_data('` not found in frame page")?;
+    let i_ra = source.find("school_ra(sc)").with_context(|| format!("`school_ra(sc)` not found in frame page\n{}", diagnose(&source)))?;
+    let i_sc = source.find("sc_data('").with_context(|| format!("`sc_data('` not found in frame page\n{}", diagnose(&source)))?;
 
     let ra: String = source[i_ra..].chars().take(50).collect::<String>().replacen(' ', "", 1);
     let extract_code = Regex::new(r"url:'.(.*?)'")?
@@ -95,6 +95,34 @@ pub fn parse_frame(frame_url: &str, source: String) -> Result<Session> {
         sc_data,
         page_source: source,
     })
+}
+
+
+/// Printed when the frame page no longer looks like the original parser expects:
+/// shows size, head, external script/frame links and where the key tokens occur.
+pub fn diagnose(source: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let chars: Vec<char> = source.chars().collect();
+    let _ = writeln!(out, "--- 진단: frame 페이지 {}자 ---", chars.len());
+    let head: String = chars.iter().take(300).collect();
+    let _ = writeln!(out, "[처음 300자]\n{}\n", head.replace('\r', ""));
+
+    if let Ok(re) = Regex::new(r#"(?i)<(?:i?frame|script)[^>]*\b(?:src|href)\s*=\s*["']?([^"' >]+)"#) {
+        for c in re.captures_iter(source).take(15) {
+            let _ = writeln!(out, "[링크] {}", &c[1]);
+        }
+    }
+    for token in ["school_ra", "sc_data", "url:", "function 자료", "자료", "base64", "ajax", "fetch(", "XMLHttp"] {
+        let hits: Vec<usize> = source.match_indices(token).map(|(i, _)| i).take(3).collect();
+        let _ = writeln!(out, "[토큰 '{token}'] {}곳", source.matches(token).count());
+        for i in hits {
+            let start = source[..i].char_indices().rev().nth(40).map(|(b, _)| b).unwrap_or(0);
+            let end = source[i..].char_indices().nth(120).map(|(b, _)| i + b).unwrap_or(source.len());
+            let _ = writeln!(out, "    …{}…", source[start..end].replace(['\r', '\n'], " "));
+        }
+    }
+    out
 }
 
 // ---------- step 2: school search ----------
